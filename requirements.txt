@@ -1,0 +1,10 @@
+torch
+torchvision
+torchaudio
+"transformers[torch]"
+numpy
+pandas
+json
+seaborn
+matplotlib
+scikit-learn
