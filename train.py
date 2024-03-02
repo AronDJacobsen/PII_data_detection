@@ -4,6 +4,23 @@ from data import load_datasets
 from transformers import BertForTokenClassification, BertTokenizerFast, TrainingArguments, Trainer
 import argparse
 
+from datasets import load_metric
+
+def compute_metrics(p):
+    predictions, labels = p
+    predictions = predictions.argmax(axis=2)
+    # predictions = [[label2id_inverse[p] for p in preds] for preds in predictions]
+    # labels = [[label2id_inverse[l] for l in label] for label in labels]
+
+    metric = load_metric('seqeval')
+    
+    results = metric.compute(predictions=predictions, references=labels)
+    return {
+        'precision': results['overall_precision'],
+        'recall': results['overall_recall'],
+        'f1': results['overall_f1']
+    }
+
 if __name__ == "__main__":
 
     # Parse arguments
@@ -46,7 +63,7 @@ if __name__ == "__main__":
         eval_dataset=data['test'],
         tokenizer=tokenizer,
         data_collator=None,
-        compute_metrics=None,
+        compute_metrics=compute_metrics,
     )
 
     # Train the model
