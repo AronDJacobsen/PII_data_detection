@@ -42,6 +42,7 @@ def load_datasets(tokenizer, file_path = "../data/train.json", ):
 
     # Convert train and test data to datasets
     label2id = {label: i for i, label in enumerate(np.flip(np.unique(labels)))}
+    id2label = {v: k for k, v in label2id.items()}
     train_labels_numeric = [[label2id[label] for label in sent] for sent in train_labels]
     test_labels_numeric = [[label2id[label] for label in sent] for sent in test_labels]
 
@@ -50,5 +51,7 @@ def load_datasets(tokenizer, file_path = "../data/train.json", ):
     data['train'] = PIIDataset(train_encodings, train_labels_numeric)
     data['test'] = PIIDataset(test_encodings, test_labels_numeric)
     data['label2id'] = label2id
+    data['id2label'] = id2label
+    data['df'] = df
 
     return data

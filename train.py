@@ -37,7 +37,7 @@ if __name__ == "__main__":
     data = load_datasets(tokenizer, file_path=args.file_path)
 
     # Initialize model
-    model = BertForTokenClassification.from_pretrained('bert-base-uncased', num_labels=len(data['label2id']))
+    model = BertForTokenClassification.from_pretrained('bert-base-uncased', num_labels=len(data['label2id']), id2label=data['id2label'], label2id=data['label2id'])
 
     # Training arguments
     training_args = TrainingArguments(
@@ -74,6 +74,7 @@ if __name__ == "__main__":
 
     # Save the model
     trainer.save_model('./results')
+    trainer.save_
 
 
 

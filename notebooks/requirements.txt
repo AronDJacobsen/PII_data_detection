@@ -1,10 +1,9 @@
 torch
 torchvision
 torchaudio
-"transformers[torch]"
+transformers
 numpy
 pandas
-json
 seaborn
 matplotlib
 scikit-learn
