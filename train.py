@@ -26,7 +26,7 @@ if __name__ == "__main__":
     # Parse arguments
     parser = argparse.ArgumentParser()
     parser.add_argument("--file_path", type=str, default="data/train.json", help="Path to the data file")
-    parser.add_argument("--epochs", type=int, default=5, help="Number of epochs")
+    parser.add_argument("--epochs", type=int, default=1, help="Number of epochs")
     parser.add_argument("--batch_size", type=int, default=8, help="Batch size")
     args = parser.parse_args()
 
