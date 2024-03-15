@@ -9,6 +9,11 @@ TODO: https://docs.google.com/document/d/10mAxTuXbldTxhypDBVyluz5KEoxtr4I3Z0rU6b
 
 Overleaf: https://www.overleaf.com/project/65e1e54a99d8b52012c3d0f1
 
+Kaggle: https://www.kaggle.com/competitions/pii-detection-removal-from-educational-data/overview
+
+
+---
+
 
 Project description: https://docs.google.com/document/d/1ivpmZdVoVB6-EoNldE8_Gqs5pSHu1TJ2ET6ttSqH1z8/edit#heading=h.coewueeg5010
 
