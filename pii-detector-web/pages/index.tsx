@@ -25,7 +25,7 @@ export default function mainPage() {
         <Flex direction="column" align="center" style={main_content}>
           <Text style={title_style}>PII Detector</Text>
           <Text style={label_style}>Upload a file to detect PII</Text>
-          <FileDrop onFiles={(files) => console.log(files)} onRemove={(index) => console.log(index)} />
+          <FileDrop onFile={(file) => console.log(file)} />
         </Flex>
       </div>
       {/* <div>
