@@ -33,7 +33,7 @@ def split_and_pad(tokens, labels, max_length=512):
         # Padding if the chunk is smaller than max_length
         if len(tokens_chunk) < max_length:
             tokens_chunk.extend(['<pad>'] * (max_length - len(tokens_chunk)))
-            labels_chunk.extend([0] * (max_length - len(labels_chunk)))  # Assuming 0 is the padding label
+            labels_chunk.extend(['<pad>'] * (max_length - len(labels_chunk)))  # Assuming 0 is the padding label
         
         new_rows['tokens'].append(tokens_chunk)
         new_rows['labels'].append(labels_chunk)
@@ -76,13 +76,13 @@ def load_datasets(tokenizer, file_path = "../data/train.json", ):
     test_encodings = encode_tokens(tokenizer, processed_test['tokens'].tolist())
 
     # Labels
-    unique_labels = np.unique(np.concatenate(df['labels']))
+    unique_labels = np.append(np.unique(np.concatenate(df['labels'])), '<pad>')
 
     # Convert train and test data to datasets
     label2id = {label: i for i, label in enumerate(np.flip(unique_labels))}
     id2label = {v: k for k, v in label2id.items()}
-    train_labels_numeric = [[label2id[label] for label in sent] for sent in train_labels]
-    test_labels_numeric = [[label2id[label] for label in sent] for sent in test_labels]
+    train_labels_numeric = [[label2id[label] for label in sent] for sent in list(processed_train['labels'])]
+    test_labels_numeric = [[label2id[label] for label in sent] for sent in list(processed_test['labels'])]
 
     # Dataset
     data = {}
@@ -90,6 +90,5 @@ def load_datasets(tokenizer, file_path = "../data/train.json", ):
     data['test'] = PIIDataset(test_encodings, test_labels_numeric)
     data['label2id'] = label2id
     data['id2label'] = id2label
-    data['df'] = df
 
     return data
