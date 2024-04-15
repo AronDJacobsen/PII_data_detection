@@ -1,28 +1,32 @@
-
 import torch
 from data import load_datasets
 from transformers import BertForTokenClassification, BertTokenizerFast, TrainingArguments, Trainer
 import argparse
-
 from datasets import load_metric
 
 def compute_metrics(p):
     predictions, labels = p
     predictions = predictions.argmax(axis=2)
-    # predictions = [[label2id_inverse[p] for p in preds] for preds in predictions]
-    # labels = [[label2id_inverse[l] for l in label] for label in labels]
 
     metric = load_metric('seqeval')
-    
     results = metric.compute(predictions=predictions, references=labels)
+
+    precision = results['overall_precision']
+    recall = results['overall_recall']
+    f1 = results['overall_f1']
+
+    # Calculate F5 score
+    beta = 5
+    f5 = (1 + beta**2) * (precision * recall) / ((beta**2 * precision) + recall)
+
     return {
-        'precision': results['overall_precision'],
-        'recall': results['overall_recall'],
-        'f1': results['overall_f1']
+        'precision': precision,
+        'recall': recall,
+        'f1': f1,
+        'f5': f5  # Add the F5 score to the metrics
     }
 
 if __name__ == "__main__":
-
     # Parse arguments
     parser = argparse.ArgumentParser()
     parser.add_argument("--file_path", type=str, default="data/train.json", help="Path to the data file")
@@ -49,10 +53,10 @@ if __name__ == "__main__":
         eval_steps=1000,
         save_total_limit=2,
         load_best_model_at_end=True,
-        metric_for_best_model='f1',
+        metric_for_best_model='f5',
         evaluation_strategy='steps',
         num_train_epochs=args.epochs,
-        output_dir='./results',
+        output_dir='./results'
     )
 
     # Define Trainer
@@ -74,8 +78,3 @@ if __name__ == "__main__":
 
     # Save the model
     trainer.save_model('./results')
-    trainer.save_
-
-
-
-    
