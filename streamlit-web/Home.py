@@ -19,7 +19,6 @@ st.set_page_config(
 )
 
 
-
 # Initialize session_state variables if they don't exist
 # input related
 if 'entered_text' not in st.session_state:
@@ -166,6 +165,9 @@ with col1:
     st.markdown('## PII text')
 
     tab1 = st.tabs(['📝Enter text'])[0]
+
+    # TODO: another tab for uploading a file and another named 'About'
+
     # User can enter text
     with tab1:
         text = st.text_area('Enter text', value=st.session_state['entered_text'], height=height, label_visibility='collapsed', key=st.session_state['entered_text_key'])
