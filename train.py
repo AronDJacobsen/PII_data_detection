@@ -57,7 +57,7 @@ if __name__ == "__main__":
         evaluation_strategy='steps',
         num_train_epochs=args.epochs,
         output_dir='./results',
-        use_cpu=True
+        run_name=f'BERT_E{args.batch_size}'
     )
 
     # Define Trainer
