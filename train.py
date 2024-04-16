@@ -43,11 +43,13 @@ if __name__ == "__main__":
     # Initialize model
     model = BertForTokenClassification.from_pretrained('bert-base-uncased', num_labels=len(data['label2id']), id2label=data['id2label'], label2id=data['label2id'])
 
+    run_name = f'BERT_E{args.batch_size}'
+
     # Training arguments
     training_args = TrainingArguments(
         per_device_train_batch_size=args.batch_size,
         per_device_eval_batch_size=args.batch_size,
-        logging_dir='./logs',
+        logging_dir=f'./logs/{run_name}'
         logging_steps=500,
         save_steps=1000,
         eval_steps=500,
@@ -57,7 +59,7 @@ if __name__ == "__main__":
         evaluation_strategy='steps',
         num_train_epochs=args.epochs,
         output_dir='./results',
-        run_name=f'BERT_E{args.batch_size}'
+        run_name=run_name
     )
 
     # Define Trainer
