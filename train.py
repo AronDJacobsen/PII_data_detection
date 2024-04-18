@@ -32,6 +32,7 @@ if __name__ == "__main__":
     parser.add_argument("--file_path", type=str, default="data/train.json", help="Path to the data file")
     parser.add_argument("--epochs", type=int, default=1, help="Number of epochs")
     parser.add_argument("--batch_size", type=int, default=8, help="Batch size")
+    parser.add_argument("--metric", type=str, default='f5', help="Batch size")
     args = parser.parse_args()
 
     # Initialize BERT tokenizer
@@ -43,7 +44,7 @@ if __name__ == "__main__":
     # Initialize model
     model = BertForTokenClassification.from_pretrained('bert-base-uncased', num_labels=len(data['label2id']), id2label=data['id2label'], label2id=data['label2id'])
 
-    run_name = f'BERT_E{args.batch_size}'
+    run_name = f'BERT_E{args.epochs}'
 
     # Training arguments
     training_args = TrainingArguments(
@@ -55,7 +56,7 @@ if __name__ == "__main__":
         eval_steps=500,
         save_total_limit=2,
         load_best_model_at_end=True,
-        metric_for_best_model='f5',
+        metric_for_best_model=args.metric, # 'f1', 'f5', 'precision' etc.
         evaluation_strategy='steps',
         num_train_epochs=args.epochs,
         output_dir='./results',
