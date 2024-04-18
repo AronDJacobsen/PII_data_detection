@@ -49,7 +49,7 @@ if __name__ == "__main__":
     training_args = TrainingArguments(
         per_device_train_batch_size=args.batch_size,
         per_device_eval_batch_size=args.batch_size,
-        logging_dir=f'./logs/{run_name}'
+        logging_dir=f'./logs/{run_name}',
         logging_steps=500,
         save_steps=1000,
         eval_steps=500,
