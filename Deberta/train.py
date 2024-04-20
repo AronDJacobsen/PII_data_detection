@@ -14,7 +14,7 @@ def compute_metrics(pred):
     true_labels = [label for doc_labels in labels for label in doc_labels if label != -100]
     true_preds = [pred for doc_preds, doc_labels in zip(preds, labels) for pred, label in zip(doc_preds, doc_labels) if label != -100]
 
-    precision, recall, fbeta, support = precision_recall_fscore_support(true_labels, true_preds, beta=5, average='weighted')
+    precision, recall, fbeta, support = precision_recall_fscore_support(true_labels, true_preds, beta=5, average='micro')
     return {
         'precision': precision,
         'recall': recall,
@@ -131,9 +131,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--file_path", type=str, default="./data/train.json", help="Path to the data file")
     parser.add_argument("--epochs", type=int, default=1, help="Number of epochs")
-    parser.add_argument("--batch_size", type=int, default=8, help="Batch size")
+    parser.add_argument("--batch_size", type=int, default=16, help="Batch size")
     parser.add_argument("--metric", type=str, default='f5', help="Batch size")
-    parser.add_argument("--model", type=str, default='bert', help="Model to use", choices=['bert', 'deberta'])
+    parser.add_argument("--lr_type", type=str, default='linear', help="Learning rate scheduler type", choices=['linear', 'cosine'])
+    parser.add_argument("--model", type=str, default='deberta', help="Model to use", choices=['bert', 'deberta'])
     args = parser.parse_args()
 
     run_name = f"{args.model}_E{args.epochs}_B{args.batch_size}_M{args.metric}"
@@ -166,6 +167,7 @@ if __name__ == "__main__":
         num_train_epochs=args.epochs,
         # weight_decay=0.01,
         load_best_model_at_end=True,
+        lr_scheduler_type=args.lr_type,
     )
 
     trainer = Trainer(
