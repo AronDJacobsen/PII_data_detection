@@ -1,7 +1,7 @@
 
 
 ```bash
-streamlit run app/Home.py
+streamlit run streamlit-web/Home.py
 ```
 
 
