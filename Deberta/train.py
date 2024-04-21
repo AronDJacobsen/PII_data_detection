@@ -180,4 +180,13 @@ if __name__ == "__main__":
 
     trainer.train()
 
+    # Evaluate the model
+    trainer.evaluate()
+
+    # Save the model
+    trainer.save_model('./results')
+
+    from transformers import pipeline
+    classifier = pipeline("ner", model="/work3/s184984/repos/PII_data_detection/results")
+
 
