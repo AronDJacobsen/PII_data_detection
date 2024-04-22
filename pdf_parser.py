@@ -13,7 +13,7 @@ def parse_pdf(pdf_path):
     return full_text
 
 if __name__ == '__main__':
-    pdf_path = Path('sample.pdf')
+    pdf_path = Path('./pdf/Tollerup_CV.pdf')
     full_text = parse_pdf(pdf_path)
     print(full_text)
    
