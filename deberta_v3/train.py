@@ -73,6 +73,8 @@ if __name__ == "__main__":
 
     # Create output dir
     Path(args.output_dir).mkdir(exist_ok=True)
+    Path(f'./logs/{run_name}').mkdir(exist_ok=True)
+
 
     # Create run_name
     run_name = f"deberta_v2_E{args.epochs}_M{args.metric}_LR{args.lr_scheduler}{args.lr}_WR{args.warmup_ratio}_WD{args.weight_decay}"
@@ -87,7 +89,7 @@ if __name__ == "__main__":
         per_device_train_batch_size=args.batch_size,
         per_device_eval_batch_size=args.eval_batch_size,
         gradient_accumulation_steps=args.grad_accumulation_steps,
-        report_to="none",
+        report_to="tensorboard",  # Change this to enable TensorBoard logging
         evaluation_strategy="steps",
         eval_steps=50,
         eval_delay=100,
