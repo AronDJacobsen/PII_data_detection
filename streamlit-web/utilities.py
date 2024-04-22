@@ -1,13 +1,18 @@
 import json
+import streamlit as st
 
 
+# cache
+@st.cache_data
+def load_data(file_path="data/train.json"):
+    with open(file_path, "r") as file:
+        data = json.load(file)
+    return data
 
 def get_example(document_id=0):
     # Load an example from the training set
-    file_path = "data/train.json"
-    with open(file_path, "r") as file:
-        data = json.load(file)
-    # 
+    data = load_data()
+    # get the text, tokens, trailing whitespace, and labels
     text = data[document_id]["full_text"]
     tokens = data[document_id]["tokens"]
     trailing_whitespace = data[document_id]["trailing_whitespace"]
@@ -16,6 +21,9 @@ def get_example(document_id=0):
     text = f"Example {document_id}:\n{text}"
 
     return text, tokens, trailing_whitespace, labels
+
+
+
 
 tags = [
     "B-NAME_STUDENT",
@@ -61,10 +69,6 @@ further_simplify_labels_dict = {
     'URL_PERSONAL': 'URL',
 }
 further_simplify_labels_dict['O'] = 'O' 
-
-
-
-
 
 
 def batch_model_output(tokens, trailing_whitespace, labels, simplify=True):

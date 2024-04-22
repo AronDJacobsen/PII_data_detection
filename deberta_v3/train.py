@@ -7,6 +7,7 @@ from collections import defaultdict
 from pathlib import Path
 
 import torch
+from tqdm import tqdm
 from torch import nn
 import numpy as np
 import pandas as pd
@@ -18,6 +19,7 @@ from transformers.training_args import TrainingArguments
 from transformers.trainer_utils import EvalPrediction
 from transformers.data.data_collator import DataCollatorForTokenClassification
 from datasets import Dataset, DatasetDict, concatenate_datasets
+from accelerate import Accelerator
 # import wandb
 
 import argparse
@@ -395,11 +397,14 @@ if __name__ == "__main__":
     # Parse arguments
     parser = argparse.ArgumentParser()
     # Parse arguments
-    parser.add_argument("--epochs", type=int, default=3, help="Number of epochs")
+    parser.add_argument("--epochs", type=int, default=1, help="Number of epochs")
     parser.add_argument("--metric", type=str, default='f5', help="Batch size")
     parser.add_argument("--conf_thresh", type=float, default=0.90, help="Threshold for 'O' class")
     parser.add_argument("--url_thresh", type=float, default=0.1, help="Threshold for URL")
     
+    # seed and full_determinism
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument("--full_determinism", type=bool, default=False, help="Deterministic training")
     parser.add_argument("--model_path", type=str, default="microsoft/deberta-v3-large", help="Path to the training model")
     parser.add_argument("--data_dir", type=str, default='./data', help="Path to the data directory")
     parser.add_argument("--max_length", type=int, default=3072, help="Maximum length for training")
@@ -410,9 +415,16 @@ if __name__ == "__main__":
     parser.add_argument("--warmup_ratio", type=float, default=0.1, help="Warmup ratio")
     parser.add_argument("--weight_decay", type=float, default=0.01, help="Weight decay")
 
-    parser.add_argument("--batch_size", type=int, default=1, help="Batch size")
+    parser.add_argument("--batch_size", type=int, default=8, help="Batch size")
     parser.add_argument("--eval_batch_size", type=int, default=8, help="Batch size for evaluation")
-    parser.add_argument("--grad_accumulation_steps", type=int, default=16//1, help="Number of gradient accumulation steps")
+    #parser.add_argument("--grad_accumulation_steps", type=int, default=16//1, help="Number of gradient accumulation steps")
+
+
+    grad_accumulation_steps = 16 // 1
+    parser.add_argument("--grad_accumulation_steps", type=int, default=grad_accumulation_steps, help="Number of gradient accumulation steps")
+    # grad acc is 16//1 because of the AMP, which is not supported for grad acc > 1
+    # accelerator_config
+    parser.add_argument("--gradient_accumulation_kwargs", type=dict, default={'steps': grad_accumulation_steps}, help="Gradient accumulation kwargs")
 
     parser.add_argument("--freeze_embedding", type=bool, default=False, help="Freeze embedding layers")
     parser.add_argument("--freeze_layers", type=int, default=6, help="Number of layers to freeze")
@@ -458,6 +470,9 @@ if __name__ == "__main__":
         lr_scheduler_type=args.lr_scheduler,
         warmup_ratio=args.warmup_ratio,
         weight_decay=args.weight_decay,
+        seed=args.seed,
+        #accelerator_config=acceleratorConfig,
+
     )
 
     # Load dataset
@@ -487,11 +502,12 @@ if __name__ == "__main__":
     negative_idxs = [i for i, labels in enumerate(data['train']["original"]["provided_labels"]) if not any(np.array(labels) != "O")]
     exclude_indices = negative_idxs[int(len(negative_idxs) * args.negative_ratio):]
 
-
-    for fold_idx, (train_idx, eval_idx) in enumerate(folds):
+    #accelerator = Accelerator()
+    for fold_idx, (train_idx, eval_idx) in tqdm(enumerate(folds), total=args.n_splits):
         args.run_name = f"fold-{fold_idx}"
         args.output_dir = os.path.join(args.output_dir, f"fold_{fold_idx}")
         original_ds = data['train']["original"].select([i for i in train_idx if i not in exclude_indices])
+        print('Loading data...')
         train_ds = concatenate_datasets([original_ds, data['train']["extra"]])
         train_ds = train_ds.map(train_encoder, num_proc=os.cpu_count())
         eval_ds = data['train']["original"].select(eval_idx)
@@ -504,9 +520,12 @@ if __name__ == "__main__":
             tokenizer=tokenizer,
             compute_metrics=MetricsComputer(eval_ds=eval_ds, label2id=data['label2id'], id2label=data['id2label'], conf_thresh=args.conf_thresh),
             data_collator=DataCollatorForTokenClassification(tokenizer, pad_to_multiple_of=16),
+            #accelerator=Accelerator(),
         )
+        print('Training...')
         trainer.train()
         trainer.save_model(args.output_dir)
+        print('Evaluating...')
         eval_res = trainer.evaluate(eval_dataset=eval_ds)
         with open(os.path.join(args.output_dir, "eval_result.json"), "w") as f:
             json.dump(eval_res, f)

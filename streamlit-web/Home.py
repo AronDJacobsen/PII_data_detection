@@ -5,18 +5,15 @@ from annotated_text import annotated_text
 import spacy
 import pyperclip
 import pandas as pd
+import spacy
 
 from utilities import get_example, batch_model_output, tags
+from state_management import init_session_state, clear_session_state
+from state_management import restore_original, update_content, update_annotations, update_variables
 
 
-# Load the English tokenizer, tagger, parser, and NER
-#nlp = spacy.load("en_core_web_sm")
-
-
-#%%
-####################
-# Page config
-####################
+from src.model import get_model
+from src.features import FeatureExtractor
 
 # Set page config
 st.set_page_config(
@@ -25,130 +22,84 @@ st.set_page_config(
     layout='wide'
 )
 
-# Initialize session_state variables if they don't exist
-# input related
-if 'entered_text' not in st.session_state:
-    st.session_state['entered_text'] = ""
-if 'entered_text_key' not in st.session_state:
-    st.session_state['entered_text_key'] = "xxgboosters"
-if 'tokens' not in st.session_state:
-    st.session_state['tokens'] = []
-if 'trailing_whitespace' not in st.session_state:
-    st.session_state['trailing_whitespace'] = []
-# model output related
-if 'labels' not in st.session_state:
-    st.session_state['labels'] = []
-if 'analyze_PII' not in st.session_state:
-    st.session_state['analyze_PII'] = [""]
-if 'peseudo_PII' not in st.session_state:
-    st.session_state['peseudo_PII'] = [""]
-if 'tak_PII' not in st.session_state:
-    st.session_state['tak_PII'] = [""]
-if 'cleared_PII' not in st.session_state:
-    st.session_state['cleared_PII'] = [""]
-if 'label_df' not in st.session_state:
-    st.session_state['label_df'] = pd.DataFrame()
-# example related
-if "example" not in st.session_state:
-    st.session_state['example'] = False
-if "example_key" not in st.session_state:
-    st.session_state['example_key'] = "xxgboosters2"
+# Load the model
+#feature_extractor = FeatureExtractor()
+model = get_model()
 
-def clear_session_state():
-    st.session_state['entered_text'] = ""
-    st.session_state['entered_text_key'] += '1' # increment the key to force a refresh
-    st.session_state['tokens'] = []
-    st.session_state['trailing_whitespace'] = []
-    st.session_state['labels'] = []
 
-    st.session_state['analyze_PII'] = [""]
-    st.session_state['peseudo_PII'] = [""]
-    st.session_state['tak_PII'] = [""]
-    st.session_state['cleared_PII'] = [""]
-    st.session_state['label_df'] = pd.DataFrame()
+# # Load the English tokenizer, tagger, parser, NER, and word vectors
+#nlp = spacy.load("en_core_web_sm")
+from spacy.lang.en import English
+nlp = English()
 
-    st.session_state['example'] = False
-    st.session_state['example_key'] += '1' # increment the key to force a refresh
+def tokenize_text(text):
+    """
+    Tokenize the given text using the SpaCy English model. Store tokens and their trailing whitespace
+    separately in session state.
+    
+    Parameters:
+    text (str): The text to tokenize.
+    
+    Returns:
+    None: Tokens and whitespace are stored in session state.
+    """
+    # Process the text through the SpaCy pipeline
+    doc = nlp(text)
+    
+    # Extract tokens
+    tokens = [token.text for token in doc]
+    # Extract trailing whitespace associated with each token
+    trailing_whitespace = [token.whitespace_ for token in doc]
+
+    return tokens, trailing_whitespace
+
+
+def get_model_output(text, tokens):
+    """
+    Simulate model output by tagging tokens as PII or non-PII.
+    
+    Parameters:
+    tokens (list): A list of tokens.
+    
+    Returns:
+    list: A list of labels, where each label corresponds to a token.
+    """
+    # Simulate model output by tagging every third token as PII
+    #labels = ["O" if i % 3 != 0 else "PII" for i in range(len(tokens))]
+    #labels = model.predict(X_test.drop(columns=["token", "labels"]))
+    feature_extractor = FeatureExtractor(text=tokens, full_text=text)
+    feature_extractor.build_df(tokens=tokens, labels=None)
+    feature_extractor.build_features()
+    # Reset index and drop the old index to ensure unique indices
+    feature_extractor.feature_df.reset_index(drop=True, inplace=True)
+    # drop duplicate columns
+    feature_extractor.feature_df = feature_extractor.feature_df.loc[:,~feature_extractor.feature_df.columns.duplicated()]
+    feature_extractor.feature_df.fillna(0, inplace=True)
+    feature_extractor.feature_df.drop(columns=["token"], inplace=True)
+    #print(feature_extractor.feature_df.shape)
+    labels = model.predict(feature_extractor.feature_df)
+    #print(labels)
+    #labels = ['O'] * len(tokens)
+    
+    return labels
+
+
 
 # other static variables
 options = ['🔎Analyze PII', '☺️Alias', '🏷️Tag', '🧹Clean']
 
+
+# initialize the session state
+init_session_state()
+
+text=""
 
 #%%
 ####################
 # PII functions
 ####################
 
-def update_content(text, tokens, trailing_whitespace, labels):
-    st.session_state['entered_text'] = text
-
-    # simulated model output
-    st.session_state['tokens'] = tokens
-    st.session_state['trailing_whitespace'] = trailing_whitespace
-    st.session_state['labels'] = labels
-
-
-def update_annotations(text, tokens, trailing_whitespace, labels):
-    # get the annotation
-    # batch all consecutive tokens with the same label + add trailing white space
-    #batched_tokens, batched_labels = batch_model_output(tokens, trailing_whitespace, labels, simplify=False)
-    # annotate the text
-    print('updating annotations')
-    annotations = create_annotated_text(tokens, labels, trailing_whitespace)
-    st.session_state['analyze_PII'], st.session_state['peseudo_PII'], st.session_state['tag_PII'], st.session_state['cleared_PII'] = annotations
-    st.session_state['label_df'] = label_dataframe(tokens, labels)
-
-
-def update_variables(from_df, to_df):
-    # NOTE: only one action is allowed at a time
-    # i.e. updated to a new value, removed or added
-    # and we'll just update the annotated texts
-    removed, added, edited = None, None, None
-    if from_df.shape[0] > to_df.shape[0]:
-        # find the removed token
-        removed = from_df[~from_df['token'].isin(to_df['token'])]
-        # we now have to add this to the 'O' list
-    elif from_df.shape[0] < to_df.shape[0]:
-        # find the added token
-        added = to_df[~to_df['token'].isin(from_df['token'])]
-        # we now have to find this in to the 'O' list
-        # and add it as a new token
-    else:
-        # edited, find the edited rows in both dataframes, this will only be one row
-        differences = from_df != to_df
-        diff_indices = differences.any(axis=1)
-        if diff_indices.sum() == 1:
-            edited_from = from_df[diff_indices]
-            edited_to = to_df[diff_indices]
-            edited = True
-    # get the tokens and labels
-    tokens, labels = st.session_state['tokens'].copy(), st.session_state['labels'].copy()
-    for i, (token, label) in enumerate(zip(tokens, labels)):
-        if label != 'O': # Only for removed and edited
-            # check if the token is in the removed list
-            if removed is not None:
-                # removed, make it 'O'
-                if token in removed['token'].values:
-                    labels[i] = 'O'
-            elif edited:
-                # edited, update label and/or token
-                if token == edited_from['token'].values[0]:
-                    # update the label
-                    tokens[i] = edited_to['token'].values[0]
-                    labels[i] = edited_to['label'].values[0]
-        else:
-            # added
-            if added is not None:
-                if token == added['token'].values[0]:
-                    # update the label
-                    labels[i] = added['label'].values[0]
-                
-    # update the content
-    #update_content(st.session_state['entered_text'], tokens, st.session_state['trailing_whitespace'], labels)
-    # update the annotations
-    update_annotations(st.session_state['entered_text'], tokens, st.session_state['trailing_whitespace'], labels)
-    st.rerun()
-
+# load an example
 def use_example():
     # load an example
     #st.session_state['example'] = example
@@ -159,63 +110,13 @@ def use_example():
     example_text, example_tokens, example_trailing_whitespace, example_labels = get_example(document_id=doc_id)
     # set the example text
     text = example_text
-    update_content(text, example_tokens, example_trailing_whitespace, example_labels)
+    st.session_state['original_content'] = (example_tokens, example_labels)
+    update_content(text, example_tokens, example_trailing_whitespace)
+    st.session_state['labels'] = example_labels
     update_annotations(text, example_tokens, example_trailing_whitespace, example_labels)
-    return text
 
 
-def create_annotated_text(tokens, labels, trailing_whitespace):
-    """
-    Annotate the text with the labels
-    - works by tuple (token, label)
-    """
-    # create the annotation
-    analyze_annotations = []
-    pseudo_annotations = []
-    tag_annotations = []
-    cleared_annotations = []
-    for token, label, space in zip(tokens, labels, trailing_whitespace):
-        # not annotated text
-        if label == 'O':
-            # simply show the text (no tuple)
-            analyze_annotations.append(token)
-            pseudo_annotations.append(token)
-            tag_annotations.append(token)
-            cleared_annotations.append(token)
-        # annotated text
-        else:
-            analyze_annotations.append((token, label))
-            pseudo_annotations.append((token, label)) # TODO
-            tag_annotations.append((label, ""))
-            cleared_annotations.append(("removed", ""))
-        if space:
-            # add the trailing white space
-            analyze_annotations.append(" ")
-            pseudo_annotations.append(" ")
-            tag_annotations.append(" ")
-            cleared_annotations.append(" ")
-    return analyze_annotations, pseudo_annotations, tag_annotations, cleared_annotations
 
-
-def label_dataframe(tokens, labels):
-    # create df
-    df = pd.DataFrame({ 'token': tokens, 'label': labels})
-    # remove O
-    df = df[df['label'] != 'O']
-    # make unique
-    df = df.drop_duplicates()
-    # reset index
-    df.reset_index(drop=True, inplace=True)
-    return df
-
-def restore_text():
-    # create a button
-    if st.button('Restore text', key='restore'):
-        # update with the session state tokens and labels
-        print('restoring text')
-        print(st.session_state['tokens'][5:15])
-        update_annotations(st.session_state['entered_text'], st.session_state['tokens'], st.session_state['trailing_whitespace'], st.session_state['labels'])
-        st.rerun()
 
 def buttons(text, unique_key, added_text=""):
     #col1, col2, col3 = st.columns([1, 1, 2])
@@ -275,7 +176,7 @@ with col1:
     with action3:
         # test example
         if st.button('🎲Test Example', key='example'+st.session_state['example_key']):
-            text = use_example()
+            use_example()
 
 
 col1, col2, col3 = st.columns([left, middle, right])
@@ -295,13 +196,29 @@ def check_for_valid_change(df):
 height = 300 # height in pixels
 with col1:
     # enter text or read about
-    tab1, tab2 = st.tabs(['📝Entered text', 'ℹ️About']) # '📄About'])
+    tab1, tab2 = st.tabs(['📝Entered text', 'ℹ️About']) # '📄About']) # TODO: model info, performance review etc?
     # TODO: another tab for uploading a file and another named 'About'
     # User can enter text
     with tab1:
-        text = st.text_area('Enter text', value=st.session_state['entered_text'], height=height, label_visibility='collapsed', key=st.session_state['entered_text_key'])
-        st.session_state['entered_text'] = text
+        previous_text = st.session_state['entered_text']
+        text = st.text_area('Enter text', value=previous_text, height=height, label_visibility='collapsed', key='text_area'+st.session_state['example_key'])
+        #st.session_state['entered_text'] = text
+        tokens, trailing_whitespace = tokenize_text(text)
+        #print(f'len tokens: {len(st.session_state["tokens"])}, new len: {len(tokens)}, len labels {len(st.session_state["labels"])}')
+        update_content(text, tokens, trailing_whitespace)
+        # check if we need to classify
         # TODO:
+        if len(st.session_state['tokens']) != len(st.session_state['labels']):
+            #with st.spinner('Classifying PII...'):
+            print('classifying')
+            labels = get_model_output(text, tokens)
+            # update the labels
+            st.session_state['labels'] = labels
+            # update the annotations
+            update_annotations(text, tokens, trailing_whitespace, labels)
+            st.rerun()
+
+
     with tab2:
         st.write('About the app')
         st.write('This is a simple app to demonstrate how to use PII tagging in a text. The app uses a simple model to tag PII in a text. The model is trained on a small dataset and may not be accurate. The app is for demonstration purposes only.')
@@ -335,7 +252,7 @@ with col1:
             #edit_df = st.session_state['label_df']
             #print('here???')
             edited_df = st.data_editor(
-                data = st.session_state['label_df'].copy(),
+                data = st.session_state['label_df'],#.copy(),
                 column_config={
                     "token": "PII",
                     "label": st.column_config.SelectboxColumn(
@@ -347,13 +264,18 @@ with col1:
                 use_container_width=True,
                 num_rows="dynamic",
                 hide_index=True,
+                key='label_df' + st.session_state['example_key'],
                 )
-            restore_text()
+                # create a button
+            if st.button('Restore original', key='restore'):
+                restore_original()
+                edited_df = st.session_state['label_df']
+                # rerun the page
+                st.rerun()
             # check if updated
-            if check_for_valid_change(edited_df):
+            elif check_for_valid_change(edited_df):
                 # check for changes
                 if not st.session_state['label_df'].equals(edited_df):
-                    print('here')
                     update_variables(st.session_state['label_df'], edited_df)
             #else:
                 # we don't want the page to rerun
