@@ -6,8 +6,8 @@ import re
 from collections import defaultdict
 from pathlib import Path
 
-import torch
 from tqdm import tqdm
+import torch
 from torch import nn
 import numpy as np
 import pandas as pd
@@ -19,12 +19,14 @@ from transformers.training_args import TrainingArguments
 from transformers.trainer_utils import EvalPrediction
 from transformers.data.data_collator import DataCollatorForTokenClassification
 from datasets import Dataset, DatasetDict, concatenate_datasets
+from sklearn.model_selection import train_test_split
 from accelerate import Accelerator
+
 # import wandb
 
 import argparse
 
-def load_data(DATA_DIR):
+def load_data(DATA_DIR, args):
 
     data = {}
 
@@ -37,15 +39,17 @@ def load_data(DATA_DIR):
 
     data['train'] = DatasetDict()
 
-    for _key, _data in zip(["original", "extra"], [original_data, extra_data]):
-        data['train'][_key] = Dataset.from_dict({
-            "full_text": [x["full_text"] for x in _data],
-            "document": [str(x["document"]) for x in _data],
-            "tokens": [x["tokens"] for x in _data],
-            "trailing_whitespace": [x["trailing_whitespace"] for x in _data],
-            "provided_labels": [x["labels"] for x in _data],
-        })
+    original_data = pd.DataFrame(original_data)
+    original_train, original_val = train_test_split(original_data, test_size=0.3, random_state=args.seed, shuffle=True)
 
+    for _key, _data in zip(["original", "extra"], [original_train, pd.DataFrame(extra_data)]):
+        data['train'][_key] = Dataset.from_dict({
+            "full_text": _data["full_text"],
+            "document": _data['document'].apply(lambda x: str(x)), 
+            "tokens": _data["tokens"],
+            "trailing_whitespace": _data["trailing_whitespace"],
+            "provided_labels": _data["labels"]
+        })
 
     with open(str(Path(DATA_DIR).joinpath("test.json")), "r") as f:
         _test = json.load(f)
@@ -56,6 +60,15 @@ def load_data(DATA_DIR):
         "document": [x["document"] for x in _test],
         "tokens": [x["tokens"] for x in _test],
         "trailing_whitespace": [x["trailing_whitespace"] for x in _test],
+    })
+
+    # Testdata
+    data['val'] = Dataset.from_dict({
+        "full_text": original_val["full_text"],
+        "document": original_val['document'].apply(lambda x: str(x)), 
+        "tokens": original_val["tokens"],
+        "trailing_whitespace": original_val["trailing_whitespace"],
+        "provided_labels": original_val["labels"]
     })
 
     data['all_labels'] = [
@@ -397,14 +410,11 @@ if __name__ == "__main__":
     # Parse arguments
     parser = argparse.ArgumentParser()
     # Parse arguments
-    parser.add_argument("--epochs", type=int, default=1, help="Number of epochs")
+    parser.add_argument("--epochs", type=int, default=3, help="Number of epochs")
     parser.add_argument("--metric", type=str, default='f5', help="Batch size")
     parser.add_argument("--conf_thresh", type=float, default=0.90, help="Threshold for 'O' class")
     parser.add_argument("--url_thresh", type=float, default=0.1, help="Threshold for URL")
     
-    # seed and full_determinism
-    parser.add_argument("--seed", type=int, default=42, help="Random seed")
-    parser.add_argument("--full_determinism", type=bool, default=False, help="Deterministic training")
     parser.add_argument("--model_path", type=str, default="microsoft/deberta-v3-large", help="Path to the training model")
     parser.add_argument("--data_dir", type=str, default='./data', help="Path to the data directory")
     parser.add_argument("--max_length", type=int, default=3072, help="Maximum length for training")
@@ -415,16 +425,15 @@ if __name__ == "__main__":
     parser.add_argument("--warmup_ratio", type=float, default=0.1, help="Warmup ratio")
     parser.add_argument("--weight_decay", type=float, default=0.01, help="Weight decay")
 
-    parser.add_argument("--batch_size", type=int, default=8, help="Batch size")
+    parser.add_argument("--batch_size", type=int, default=1, help="Batch size")
     parser.add_argument("--eval_batch_size", type=int, default=8, help="Batch size for evaluation")
-    #parser.add_argument("--grad_accumulation_steps", type=int, default=16//1, help="Number of gradient accumulation steps")
 
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument("--full_determinism", type=bool, default=False, help="Deterministic training")
 
-    grad_accumulation_steps = 16 // 1
+    grad_accumulation_steps = 16//1
     parser.add_argument("--grad_accumulation_steps", type=int, default=grad_accumulation_steps, help="Number of gradient accumulation steps")
-    # grad acc is 16//1 because of the AMP, which is not supported for grad acc > 1
-    # accelerator_config
-    parser.add_argument("--gradient_accumulation_kwargs", type=dict, default={'steps': grad_accumulation_steps}, help="Gradient accumulation kwargs")
+    parser.add_argument("--grad_accumulation_kwargs", type=dict, default={"steps": grad_accumulation_steps}, help="Gradient accumulation kwargs")
 
     parser.add_argument("--freeze_embedding", type=bool, default=False, help="Freeze embedding layers")
     parser.add_argument("--freeze_layers", type=int, default=6, help="Number of layers to freeze")
@@ -471,12 +480,10 @@ if __name__ == "__main__":
         warmup_ratio=args.warmup_ratio,
         weight_decay=args.weight_decay,
         seed=args.seed,
-        #accelerator_config=acceleratorConfig,
-
     )
 
     # Load dataset
-    data = load_data(args.data_dir)
+    data = load_data(args.data_dir, args)
 
     tokenizer = DebertaV2TokenizerFast.from_pretrained(args.model_path)
     train_encoder = CustomTokenizer(tokenizer=tokenizer, label2id=data['label2id'], max_length=args.max_length)
@@ -502,8 +509,7 @@ if __name__ == "__main__":
     negative_idxs = [i for i, labels in enumerate(data['train']["original"]["provided_labels"]) if not any(np.array(labels) != "O")]
     exclude_indices = negative_idxs[int(len(negative_idxs) * args.negative_ratio):]
 
-    #accelerator = Accelerator()
-    for fold_idx, (train_idx, eval_idx) in tqdm(enumerate(folds), total=args.n_splits):
+    for fold_idx, (train_idx, eval_idx) in enumerate(folds):
         args.run_name = f"fold-{fold_idx}"
         args.output_dir = os.path.join(args.output_dir, f"fold_{fold_idx}")
         original_ds = data['train']["original"].select([i for i in train_idx if i not in exclude_indices])
@@ -513,14 +519,13 @@ if __name__ == "__main__":
         eval_ds = data['train']["original"].select(eval_idx)
         eval_ds = eval_ds.map(eval_encoder, num_proc=os.cpu_count())
         trainer = Trainer(
-            args=args,
+            args=train_args,
             model_init=model_init,
             train_dataset=train_ds,
             eval_dataset=eval_ds,
             tokenizer=tokenizer,
             compute_metrics=MetricsComputer(eval_ds=eval_ds, label2id=data['label2id'], id2label=data['id2label'], conf_thresh=args.conf_thresh),
             data_collator=DataCollatorForTokenClassification(tokenizer, pad_to_multiple_of=16),
-            #accelerator=Accelerator(),
         )
         print('Training...')
         trainer.train()
