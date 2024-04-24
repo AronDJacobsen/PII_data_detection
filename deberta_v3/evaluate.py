@@ -7,7 +7,7 @@ from pathlib import Path
 import torch
 import numpy as np
 import pandas as pd
-from datasets import Dataset
+from datasets import Dataset, DatasetDict, concatenate_datasets
 from spacy.lang.en import English
 from transformers.models.deberta_v2 import DebertaV2ForTokenClassification, DebertaV2TokenizerFast
 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
@@ -15,83 +15,82 @@ from transformers.trainer import Trainer
 from transformers.training_args import TrainingArguments
 from transformers.data.data_collator import DataCollatorForTokenClassification
 
+
+from transformers import pipeline
+
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import fbeta_score
+
+from utils import CustomPredTokenizer, get_predictions
+
 import argparse
 
-def load_data(DATA_DIR):
-    with open(str(Path(DATA_DIR).joinpath("test.json")), "r") as f:
-        test = json.load(f)
+def load_data(DATA_DIR, args):
 
-    test = Dataset.from_dict({
-        "full_text": [x["full_text"] for x in test],
-        "document": [x["document"] for x in test],
-        "tokens": [x["tokens"] for x in test],
-        "trailing_whitespace": [x["trailing_whitespace"] for x in test],
+    data = {}
+
+    # Train data
+    with Path("./data/train.json").open("r") as f:
+        original_data = json.load(f)
+
+    with Path("./data/mpware_mixtral8x7b_v1.1-no-i-username.json").open("r") as f:
+        extra_data = json.load(f)
+
+    data['train'] = DatasetDict()
+
+    original_data = pd.DataFrame(original_data)
+    original_train, original_val = train_test_split(original_data, test_size=0.3, random_state=args.seed, shuffle=True)
+
+    for _key, _data in zip(["original", "extra"], [original_train, pd.DataFrame(extra_data)]):
+        data['train'][_key] = Dataset.from_dict({
+            "full_text": _data["full_text"],
+            "document": _data['document'].apply(lambda x: str(x)), 
+            "tokens": _data["tokens"],
+            "trailing_whitespace": _data["trailing_whitespace"],
+            "provided_labels": _data["labels"]
+        })
+
+    with open(str(Path(DATA_DIR).joinpath("test.json")), "r") as f:
+        _test = json.load(f)
+
+    # Testdata
+    data['test'] = Dataset.from_dict({
+        "full_text": [x["full_text"] for x in _test],
+        "document": [x["document"] for x in _test],
+        "tokens": [x["tokens"] for x in _test],
+        "trailing_whitespace": [x["trailing_whitespace"] for x in _test],
     })
 
-    return test, None
+    # Testdata
+    data['val'] = Dataset.from_dict({
+        "full_text": original_val["full_text"],
+        "document": original_val['document'].apply(lambda x: str(x)), 
+        "tokens": original_val["tokens"],
+        "trailing_whitespace": original_val["trailing_whitespace"],
+        "provided_labels": original_val["labels"]
+    })
 
-def find_span(target: list[str], document: list[str]) -> list[list[int]]:
-    idx = 0
-    spans = []
-    span = []
+    data['all_labels'] = [
+    'B-EMAIL', 'B-ID_NUM', 'B-NAME_STUDENT', 'B-PHONE_NUM', 'B-STREET_ADDRESS', 'B-URL_PERSONAL', 'B-USERNAME', 'I-ID_NUM', 'I-NAME_STUDENT', 'I-PHONE_NUM', 'I-STREET_ADDRESS', 'I-URL_PERSONAL', 'O'
+    ]
 
-    for i, token in enumerate(document):
-        if token != target[idx]:
-            idx = 0
-            span = []
-            continue
-        span.append(i)
-        idx += 1
-        if idx == len(target):
-            spans.append(span)
-            span = []
-            idx = 0
-            continue
-    
-    return spans
+    data['id2label'] = {i: l for i, l in enumerate(data['all_labels'])}
+    data['label2id'] = {v: k for k, v in data['id2label'].items()}
+    data['target'] = [l for l in data['all_labels'] if l != "O"]
 
-def spacy_to_hf(data: dict, idx: int) -> slice:
-    """
-    Given an index of spacy token, return corresponding indices in deberta's output.
-    We use this to find indice of URL tokens later.
-    """
-    str_range = np.where(np.array(data["token_map"]) == idx)[0]
-    start_idx = bisect.bisect_left([off[1] for off in data["offset_mapping"]], str_range.min())
-    end_idx = start_idx
-    while end_idx < len(data["offset_mapping"]):
-        if str_range.max() > data["offset_mapping"][end_idx][1]:
-            end_idx += 1
-            continue
-        break
-    token_range = slice(start_idx, end_idx+1)
-    return token_range
+    return data
 
-class CustomTokenizer:
-    def __init__(self, tokenizer: PreTrainedTokenizerBase, max_length: int) -> None:
-        self.tokenizer = tokenizer
-        self.max_length = max_length
 
-    def __call__(self, example: dict) -> dict:
-        text = []
-        token_map = []
 
-        for idx, (t, ws) in enumerate(zip(example["tokens"], example["trailing_whitespace"])):
-            text.append(t)
-            token_map.extend([idx]*len(t))
-            if ws:
-                text.append(" ")
-                token_map.append(-1)
-
-        tokenized = self.tokenizer(
-            "".join(text),
-            return_offsets_mapping=True,
-            truncation=True,
-            max_length=self.max_length,
-        )
-
-        return {**tokenized,"token_map": token_map,}
 
 if __name__ == "__main__":
+
+    """
+    Run evaluation on test set and validation set.
+
+    The test set is usede to create a submission file, while the validation set is used to calculate the f_beta score.
+    """
+
     # Parse arguments
     parser = argparse.ArgumentParser()
     # Parse arguments
@@ -104,6 +103,9 @@ if __name__ == "__main__":
     
     parser.add_argument("--model_path", type=str, default="./deberta_v3/model", help="Path to the model")
     parser.add_argument("--data_dir", type=str, default='./data', help="Path to the data directory")
+
+    parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument("--full_determinism", type=bool, default=False, help="Deterministic training")
 
     parser.add_argument("--lr", type=float, default=2.5e-5, help="Learning rate")
     parser.add_argument("--lr_scheduler", type=str, default='linear', help="Learning rate scheduler type", choices=['linear', 'cosine'])
@@ -123,21 +125,28 @@ if __name__ == "__main__":
     nlp = English()
 
     # Load dataset
-    test, train = load_data(args.data_dir)
+    print("Loading data....")
+    data = load_data(args.data_dir, args)
 
     # Instantiate tokenizer
     tokenizer = DebertaV2TokenizerFast.from_pretrained(args.model_path)
 
-    # Tokenize dataset
-    test = test.map(CustomTokenizer(tokenizer=tokenizer, max_length=args.inference_max_length), 
+    # Tokenize dataset 
+    data['val'] = data['val'].map(CustomPredTokenizer(tokenizer=tokenizer, max_length=args.inference_max_length), 
+                    num_proc=os.cpu_count())            
+
+    data['test'] = data['test'].map(CustomPredTokenizer(tokenizer=tokenizer, max_length=args.inference_max_length),
                     num_proc=os.cpu_count())
+    
+    print("Loading model....")
 
     model = DebertaV2ForTokenClassification.from_pretrained(args.model_path)
     collator = DataCollatorForTokenClassification(tokenizer)
     train_args = TrainingArguments(".", 
                                    per_device_eval_batch_size=1, 
                                    report_to="none", 
-                                   fp16=args.AMP)
+                                   fp16=args.AMP, 
+                                   use_cpu=(args.device == 'cpu'))
     
     trainer = Trainer(
         model=model, 
@@ -146,120 +155,23 @@ if __name__ == "__main__":
         tokenizer=tokenizer,
     )
 
-    # Predict on data
-    predictions = trainer.predict(test).predictions  # (n_sample, len, n_labels)
+    print("Model loaded")
 
-    # Post-processing
-    pred_softmax = torch.softmax(torch.from_numpy(predictions), dim=2).numpy()
-    id2label = model.config.id2label
-    o_index = model.config.label2id["O"]
-    preds = predictions.argmax(-1)
-    preds_without_o = pred_softmax.copy()
-    preds_without_o[:,:,o_index] = 0
-    preds_without_o = preds_without_o.argmax(-1)
-    o_preds = pred_softmax[:,:,o_index]
-    preds_final = np.where(o_preds < args.conf_thresh, preds_without_o , preds)
+    # Create submission csv (on Test - i.e. no provided labels)
+    print("Predicting on test....")
+    submission_df, _ = get_predictions(data['test'], trainer, model, args, nlp, return_all = False)
+    print("Creating submission.csv....")
+    submission_df.to_csv("submissions/submission.csv", index=False)
 
-    processed =[]
-    pairs = set()
+    # Calculating f_beta score on validation set
+    print("Predicting on validation....")
 
-    # Iterate over document
-    for p, token_map, offsets, tokens, doc in zip(
-        preds_final, test["token_map"], test["offset_mapping"], test["tokens"], test["document"]
-    ):
-        # Iterate over sequence
-        for token_pred, (start_idx, end_idx) in zip(p, offsets):
-            label_pred = id2label[token_pred]
+    _, data['val'] = get_predictions(data['val'], trainer, model, args, nlp, return_all = True)
 
-            if start_idx + end_idx == 0:
-                # [CLS] token i.e. BOS
-                continue
+    print("Calculating f5 score....")
+    non_O_ids = [item != 'O' for sublist in data['val']['provided_labels'] for item in sublist]
 
-            if token_map[start_idx] == -1:
-                start_idx += 1
-
-            # ignore "\n\n"
-            while start_idx < len(token_map) and tokens[token_map[start_idx]].isspace():
-                start_idx += 1
-
-            if start_idx >= len(token_map): 
-                break
-
-            token_id = token_map[start_idx]
-            pair = (doc, token_id)
-
-            # ignore certain labels and whitespace
-            if label_pred in ("O", "B-EMAIL", "B-URL_PERSONAL", "B-PHONE_NUM", "I-PHONE_NUM") or token_id == -1:
-                continue        
-
-            if pair in pairs:
-                continue
-                
-            processed.append(
-                {"document": doc, "token": token_id, "label": label_pred, "token_str": tokens[token_id]}
-            )
-            pairs.add(pair)
-
-    # WHITELISTING URLS
-    url_whitelist = [
-    "wikipedia.org",
-    "coursera.org",
-    "google.com",
-    ".gov",
-    ]
-    url_whitelist_regex = re.compile("|".join(url_whitelist))
-
-    for row_idx, _data in enumerate(test):
-        for token_idx, token in enumerate(_data["tokens"]):
-            if not nlp.tokenizer.url_match(token):
-                continue
-            print(f"Found URL: {token}")
-            if url_whitelist_regex.search(token) is not None:
-                print("The above is in the whitelist")
-                continue
-            input_idxs = spacy_to_hf(_data, token_idx)
-            probs = pred_softmax[row_idx, input_idxs, model.config.label2id["B-URL_PERSONAL"]]
-            if probs.mean() > args.conf_thresh:
-                print("The above is PII")
-                processed.append(
-                    {
-                        "document": _data["document"], 
-                        "token": token_idx, 
-                        "label": "B-URL_PERSONAL", 
-                        "token_str": token
-                    }
-                )
-                pairs.add((_data["document"], token_idx))
-            else:
-                print("The above is not PII")
-
-    # WHITELISTING EMAILS AND PHONENUMBERS
-    email_regex = re.compile(r'[\w.+-]+@[\w-]+\.[\w.-]+')
-    phone_num_regex = re.compile(r"(\(\d{3}\)\d{3}\-\d{4}\w*|\d{3}\.\d{3}\.\d{4})\s")
-    emails = []
-    phone_nums = []
-
-    for _data in test:
-        # email
-        for token_idx, token in enumerate(_data["tokens"]):
-            if re.fullmatch(email_regex, token) is not None:
-                emails.append(
-                    {"document": _data["document"], "token": token_idx, "label": "B-EMAIL", "token_str": token}
-                )
-        # phone number
-        matches = phone_num_regex.findall(_data["full_text"])
-        if not matches:
-            continue
-        for match in matches:
-            target = [t.text for t in nlp.tokenizer(match)]
-            matched_spans = find_span(target, _data["tokens"])
-        for matched_span in matched_spans:
-            for intermediate, token_idx in enumerate(matched_span):
-                prefix = "I" if intermediate else "B"
-                phone_nums.append(
-                    {"document": _data["document"], "token": token_idx, "label": f"{prefix}-PHONE_NUM", "token_str": _data["tokens"][token_idx]}
-                )
-
-    df = pd.DataFrame(processed + emails + phone_nums)
-    df["row_id"] = list(range(len(df)))
-    df.to_csv("submissions/submission.csv", index=False)
+    true_labels = np.array([data['label2id'][item] for sublist in data['val']['provided_labels'] for item in sublist])[non_O_ids]
+    pred_labels = np.array([data['label2id'][item] for sublist in data['val']['pred_labels'] for item in sublist])[non_O_ids]
+    
+    print(f"F5 score: {fbeta_score(true_labels, pred_labels, average='micro', beta=5)}")

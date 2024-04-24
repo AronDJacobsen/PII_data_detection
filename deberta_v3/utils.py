@@ -3,6 +3,7 @@ import copy
 import gc
 import os
 import re
+import bisect
 from collections import defaultdict
 from pathlib import Path
 
@@ -162,7 +163,69 @@ class PRFScore:
         return {"p": self.precision, "r": self.recall, "f5": self.f5}
 
 
-class CustomTokenizer:
+
+def find_span(target: list[str], document: list[str]) -> list[list[int]]:
+    idx = 0
+    spans = []
+    span = []
+
+    for i, token in enumerate(document):
+        if token != target[idx]:
+            idx = 0
+            span = []
+            continue
+        span.append(i)
+        idx += 1
+        if idx == len(target):
+            spans.append(span)
+            span = []
+            idx = 0
+            continue
+    
+    return spans
+
+def spacy_to_hf(data: dict, idx: int) -> slice:
+    """
+    Given an index of spacy token, return corresponding indices in deberta's output.
+    We use this to find indice of URL tokens later.
+    """
+    str_range = np.where(np.array(data["token_map"]) == idx)[0]
+    start_idx = bisect.bisect_left([off[1] for off in data["offset_mapping"]], str_range.min())
+    end_idx = start_idx
+    while end_idx < len(data["offset_mapping"]):
+        if str_range.max() > data["offset_mapping"][end_idx][1]:
+            end_idx += 1
+            continue
+        break
+    token_range = slice(start_idx, end_idx+1)
+    return token_range
+
+class CustomPredTokenizer:
+    def __init__(self, tokenizer: PreTrainedTokenizerBase, max_length: int) -> None:
+        self.tokenizer = tokenizer
+        self.max_length = max_length
+
+    def __call__(self, example: dict) -> dict:
+        text = []
+        token_map = []
+
+        for idx, (t, ws) in enumerate(zip(example["tokens"], example["trailing_whitespace"])):
+            text.append(t)
+            token_map.extend([idx]*len(t))
+            if ws:
+                text.append(" ")
+                token_map.append(-1)
+
+        tokenized = self.tokenizer(
+            "".join(text),
+            return_offsets_mapping=True,
+            truncation=True,
+            max_length=self.max_length,
+        )
+
+        return {**tokenized,"token_map": token_map,}
+
+class CustomTrainTokenizer:
     def __init__(self, tokenizer: PreTrainedTokenizerBase, label2id: dict, max_length: int) -> None:
         self.tokenizer = tokenizer
         self.label2id = label2id
@@ -404,3 +467,149 @@ class ModelInit:
     def __call__(self) -> DebertaV2ForTokenClassification:
         self.model.load_state_dict(self.weight)
         return self.model
+    
+
+
+def get_predictions(data, trainer, model, args, nlp, return_all = True):
+    # Get logits
+    predictions = trainer.predict(data.select_columns(['input_ids', 'attention_mask'])).predictions  # (n_sample, len, n_labels)
+
+    # Post-processing
+    pred_softmax = torch.softmax(torch.from_numpy(predictions), dim=2).numpy()
+    id2label = model.config.id2label
+    o_index = model.config.label2id["O"]
+
+    # Predictions on data
+    preds = predictions.argmax(-1)
+
+    # Predict while ignoring 'O' class - i.e. get "next-best" predictions
+    preds_without_o = pred_softmax.copy()
+    preds_without_o[:,:,o_index] = 0
+    preds_without_o = preds_without_o.argmax(-1)
+
+    # Get probabilities of 'O' class        
+    o_preds = pred_softmax[:,:,o_index]
+
+    # Replace 'O' class predictions if confidence is below threshold
+    preds_final = np.where(o_preds < args.conf_thresh, preds_without_o , preds)
+
+    processed =[]
+    pairs = set()
+
+    # Iterate over document
+    for p, token_map, offsets, tokens, doc in zip(
+        preds_final, data["token_map"], data["offset_mapping"], data["tokens"], data["document"]
+    ):
+        # Iterate over sequence
+        for token_pred, (start_idx, end_idx) in zip(p, offsets):
+            label_pred = id2label[token_pred]
+
+            if start_idx + end_idx == 0:
+                # [CLS] token i.e. BOS
+                continue
+
+            if token_map[start_idx] == -1:
+                start_idx += 1
+
+            # ignore "\n\n"
+            while start_idx < len(token_map) and tokens[token_map[start_idx]].isspace():
+                start_idx += 1
+
+            if start_idx >= len(token_map): 
+                break
+
+            token_id = token_map[start_idx]
+            pair = (doc, token_id)
+
+            # ignore certain labels and whitespace
+            if label_pred in ("O", "B-EMAIL", "B-URL_PERSONAL", "B-PHONE_NUM", "I-PHONE_NUM") or token_id == -1:
+                continue        
+
+            if pair in pairs:
+                continue
+                
+            processed.append(
+                {"document": doc, "token": token_id, "label": label_pred, "token_str": tokens[token_id]}
+            )
+            pairs.add(pair)
+
+    # WHITELISTING URLS
+    url_whitelist = [
+    "wikipedia.org",
+    "coursera.org",
+    "google.com",
+    ".gov",
+    ]
+    url_whitelist_regex = re.compile("|".join(url_whitelist))
+
+    for row_idx, _data in enumerate(data):
+        for token_idx, token in enumerate(_data["tokens"]):
+            if not nlp.tokenizer.url_match(token):
+                continue
+            print(f"Found URL: {token}")
+            if url_whitelist_regex.search(token) is not None:
+                print("The above is in the whitelist")
+                continue
+            input_idxs = spacy_to_hf(_data, token_idx)
+            probs = pred_softmax[row_idx, input_idxs, model.config.label2id["B-URL_PERSONAL"]]
+            if probs.mean() > args.conf_thresh:
+                print("The above is PII")
+                processed.append(
+                    {
+                        "document": _data["document"], 
+                        "token": token_idx, 
+                        "label": "B-URL_PERSONAL", 
+                        "token_str": token
+                    }
+                )
+                pairs.add((_data["document"], token_idx))
+            else:
+                print("The above is not PII")
+
+    # WHITELISTING EMAILS AND PHONENUMBERS
+    email_regex = re.compile(r'[\w.+-]+@[\w-]+\.[\w.-]+')
+    phone_num_regex = re.compile(r"(\(\d{3}\)\d{3}\-\d{4}\w*|\d{3}\.\d{3}\.\d{4})\s")
+    emails = []
+    phone_nums = []
+
+    for _data in data:
+        # email
+        for token_idx, token in enumerate(_data["tokens"]):
+            if re.fullmatch(email_regex, token) is not None:
+                emails.append(
+                    {"document": _data["document"], "token": token_idx, "label": "B-EMAIL", "token_str": token}
+                )
+        # phone number
+        matches = phone_num_regex.findall(_data["full_text"])
+        if not matches:
+            continue
+        for match in matches:
+            target = [t.text for t in nlp.tokenizer(match)]
+            matched_spans = find_span(target, _data["tokens"])
+        for matched_span in matched_spans:
+            for intermediate, token_idx in enumerate(matched_span):
+                prefix = "I" if intermediate else "B"
+                phone_nums.append(
+                    {"document": _data["document"], "token": token_idx, "label": f"{prefix}-PHONE_NUM", "token_str": _data["tokens"][token_idx]}
+                )
+
+    submission_df = pd.DataFrame(processed + emails + phone_nums)
+    submission_df["row_id"] = list(range(len(submission_df)))
+
+    if not return_all:
+        return submission_df, None
+    else:
+        # Extending submission ID to include 'O', then adding predictions to dataste
+        pred_labels = []
+        for document in data["document"]:
+
+            # Get all tokens in document
+            docu_tokens = pd.DataFrame(data.to_pandas()[data.to_pandas()['document'] == document]['tokens'].explode().reset_index(drop=True))
+
+            # Insert predictions - and fill NaNs with 'O'
+            docu_preds = docu_tokens.join(submission_df[submission_df['document'] == document].set_index('token'))['label'].fillna('O')
+
+            pred_labels.append(docu_preds.to_list())
+            
+        data = data.add_column('pred_labels', pred_labels)
+        return submission_df, data
