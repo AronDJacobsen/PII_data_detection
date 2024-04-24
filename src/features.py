@@ -120,20 +120,25 @@ class FeatureExtractor:
         # Check if any of the tokens to check are in the significant tokens set
         return any(token in significant_tokens_set for token in tokens_to_check)
 
-    
-    def build_df(self, text: str = "", tokens: list = None, labels: list = None) -> pd.DataFrame:
-        token_indices = self.tokens
-        if not self.tokens and text != "":
-            token_indices = self.tokenizer(text)
-            self.tokens = token_indices
-        if tokens:
-            token_indices = tokens
-        elif self.input_df is not None:
-            token_indices = self.input_df["tokens"]
-        self.feature_df["token"] = token_indices
 
-        #self.feature_df['labels'] = labels
-        return None
+    def clean_up(self):
+        self.text = None
+        self.tokens = None
+        self.feature_df = pd.DataFrame()
+        self.input_df = None
+        self.full_text = None
+        self.NER_persons = None
+        self.NER_locations = None
+        #return None
+
+    def build_df(self, text: str = "", tokens: list = None) -> pd.DataFrame:
+        # check if in
+        self.text = text
+        self.full_text = text
+        self.tokens = tokens
+        token_indices = self.tokens
+        self.feature_df["token"] = token_indices
+        #return None
 
     def build_features(self) -> list[tuple[int, str]]:
         # Computing Features
@@ -199,4 +204,12 @@ class FeatureExtractor:
             self.feature_df[feature_name] = [self.check_preceding_contextual_tokens(i, label) for i in range(len(self.feature_df))]
 
 
-        return None
+        #return None
+
+    def clean_features(self):
+        # Reset index and drop the old index to ensure unique indices
+        self.feature_df.reset_index(drop=True, inplace=True)
+        # drop duplicate columns
+        self.feature_df = self.feature_df.loc[:,~self.feature_df.columns.duplicated()]
+        self.feature_df.fillna(0, inplace=True)
+        self.feature_df.drop(columns=["token"], inplace=True)

@@ -2,6 +2,34 @@ import json
 import streamlit as st
 
 
+# # Load the English tokenizer, tagger, parser, NER, and word vectors
+#nlp = spacy.load("en_core_web_sm")
+from spacy.lang.en import English
+nlp = English()
+
+def tokenize_text(text):
+    """
+    Tokenize the given text using the SpaCy English model. Store tokens and their trailing whitespace
+    separately in session state.
+    
+    Parameters:
+    text (str): The text to tokenize.
+    
+    Returns:
+    None: Tokens and whitespace are stored in session state.
+    """
+    # Process the text through the SpaCy pipeline
+    doc = nlp(text)
+    
+    # Extract tokens
+    tokens = [token.text for token in doc]
+    # Extract trailing whitespace associated with each token
+    trailing_whitespace = [token.whitespace_ for token in doc]
+
+    return tokens, trailing_whitespace
+
+
+
 # cache
 @st.cache_data
 def load_data(file_path="data/train.json"):

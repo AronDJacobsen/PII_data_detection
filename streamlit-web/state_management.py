@@ -165,25 +165,57 @@ def create_annotated_text(tokens, labels, trailing_whitespace):
     pseudo_annotations = []
     tag_annotations = []
     cleared_annotations = []
+    previous_label = None
     for token, label, space in zip(tokens, labels, trailing_whitespace):
         # not annotated text
         if label == 'O':
+            if previous_label == 'O':
+                analyze_annotations[-1] += token
+                pseudo_annotations[-1] += token
+                tag_annotations[-1] += token
+                cleared_annotations[-1] += token
+            else:
+                analyze_annotations.append(token)
+                pseudo_annotations.append(token)
+                tag_annotations.append(token)
+                cleared_annotations.append(token)
             # simply show the text (no tuple)
-            analyze_annotations.append(token)
-            pseudo_annotations.append(token)
-            tag_annotations.append(token)
-            cleared_annotations.append(token)
+            # analyze_annotations[-1] += token if previous_label == 'O' else analyze_annotations.append(token)
+            # pseudo_annotations[-1] += token if previous_label == 'O' else pseudo_annotations.append(token)
+            # tag_annotations[-1] += token if previous_label == 'O' else tag_annotations.append(token)
+            # cleared_annotations[-1] += token if previous_label == 'O' else cleared_annotations.append(token)
+            #pseudo_annotations.append(token) if previous_label != 'O' else pseudo_annotations[-1] += token
+            #tag_annotations.append(token)
+            #cleared_annotations.append(token)
         # annotated text
         else:
             analyze_annotations.append((token, label))
             pseudo_annotations.append((token, label)) # TODO
             tag_annotations.append((label, ""))
             cleared_annotations.append(("removed", ""))
+        
+        # finally add the trailing white space
         if space:
+            if label == 'O':
+                analyze_annotations[-1] += " "
+                pseudo_annotations[-1] += " "
+                tag_annotations[-1] += " "
+                cleared_annotations[-1] += " "
+            else:
+                analyze_annotations.append(" ")
+                pseudo_annotations.append(" ")
+                tag_annotations.append(" ")
+                cleared_annotations.append(" ")
             # add the trailing white space
-            analyze_annotations.append(" ")
-            pseudo_annotations.append(" ")
-            tag_annotations.append(" ")
-            cleared_annotations.append(" ")
+            # analyze_annotations[-1] += " " if previous_label == 'O' else analyze_annotations.append(" ")
+            # pseudo_annotations[-1] += " " if previous_label == 'O' else pseudo_annotations.append(" ")
+            # tag_annotations[-1] += " " if previous_label == 'O' else tag_annotations.append(" ")
+            # cleared_annotations[-1] += " " if previous_label == 'O' else cleared_annotations.append(" ")
+
+            #pseudo_annotations.append(" ")
+            #tag_annotations.append(" ")
+            #cleared_annotations.append(" ")
+        # update previous
+        previous_label = label
     return analyze_annotations, pseudo_annotations, tag_annotations, cleared_annotations
 

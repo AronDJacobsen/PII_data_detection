@@ -7,13 +7,11 @@ import pyperclip
 import pandas as pd
 import spacy
 
-from utilities import get_example, batch_model_output, tags
+from utilities import get_example, batch_model_output, tags, tokenize_text
 from state_management import init_session_state, clear_session_state
 from state_management import restore_original, update_content, update_annotations, update_variables
-
-
 from src.model import get_model
-from src.features import FeatureExtractor
+
 
 # Set page config
 st.set_page_config(
@@ -21,68 +19,6 @@ st.set_page_config(
     page_icon='🔒', 
     layout='wide'
 )
-
-# Load the model
-#feature_extractor = FeatureExtractor()
-model = get_model()
-
-
-# # Load the English tokenizer, tagger, parser, NER, and word vectors
-#nlp = spacy.load("en_core_web_sm")
-from spacy.lang.en import English
-nlp = English()
-
-def tokenize_text(text):
-    """
-    Tokenize the given text using the SpaCy English model. Store tokens and their trailing whitespace
-    separately in session state.
-    
-    Parameters:
-    text (str): The text to tokenize.
-    
-    Returns:
-    None: Tokens and whitespace are stored in session state.
-    """
-    # Process the text through the SpaCy pipeline
-    doc = nlp(text)
-    
-    # Extract tokens
-    tokens = [token.text for token in doc]
-    # Extract trailing whitespace associated with each token
-    trailing_whitespace = [token.whitespace_ for token in doc]
-
-    return tokens, trailing_whitespace
-
-
-def get_model_output(text, tokens):
-    """
-    Simulate model output by tagging tokens as PII or non-PII.
-    
-    Parameters:
-    tokens (list): A list of tokens.
-    
-    Returns:
-    list: A list of labels, where each label corresponds to a token.
-    """
-    # Simulate model output by tagging every third token as PII
-    #labels = ["O" if i % 3 != 0 else "PII" for i in range(len(tokens))]
-    #labels = model.predict(X_test.drop(columns=["token", "labels"]))
-    feature_extractor = FeatureExtractor(text=tokens, full_text=text)
-    feature_extractor.build_df(tokens=tokens, labels=None)
-    feature_extractor.build_features()
-    # Reset index and drop the old index to ensure unique indices
-    feature_extractor.feature_df.reset_index(drop=True, inplace=True)
-    # drop duplicate columns
-    feature_extractor.feature_df = feature_extractor.feature_df.loc[:,~feature_extractor.feature_df.columns.duplicated()]
-    feature_extractor.feature_df.fillna(0, inplace=True)
-    feature_extractor.feature_df.drop(columns=["token"], inplace=True)
-    #print(feature_extractor.feature_df.shape)
-    labels = model.predict(feature_extractor.feature_df)
-    #print(labels)
-    #labels = ['O'] * len(tokens)
-    
-    return labels
-
 
 
 # other static variables
@@ -99,6 +35,7 @@ text=""
 # PII functions
 ####################
 
+
 # load an example
 def use_example():
     # load an example
@@ -114,7 +51,10 @@ def use_example():
     update_content(text, example_tokens, example_trailing_whitespace)
     st.session_state['labels'] = example_labels
     update_annotations(text, example_tokens, example_trailing_whitespace, example_labels)
+    # rerun the page
+    st.rerun()
 
+#def predict():
 
 
 
@@ -142,7 +82,6 @@ def buttons(text, unique_key, added_text=""):
 ####################
 
 st.title('Welcome John Doe')
-
 
 
 left, right = 8, 10
@@ -202,22 +141,14 @@ with col1:
     with tab1:
         previous_text = st.session_state['entered_text']
         text = st.text_area('Enter text', value=previous_text, height=height, label_visibility='collapsed', key='text_area'+st.session_state['example_key'])
-        #st.session_state['entered_text'] = text
-        tokens, trailing_whitespace = tokenize_text(text)
-        #print(f'len tokens: {len(st.session_state["tokens"])}, new len: {len(tokens)}, len labels {len(st.session_state["labels"])}')
-        update_content(text, tokens, trailing_whitespace)
-        # check if we need to classify
-        # TODO:
-        if len(st.session_state['tokens']) != len(st.session_state['labels']):
-            #with st.spinner('Classifying PII...'):
-            print('classifying')
-            labels = get_model_output(text, tokens)
-            # update the labels
-            st.session_state['labels'] = labels
-            # update the annotations
-            update_annotations(text, tokens, trailing_whitespace, labels)
-            st.rerun()
-
+        # we'll later check if the text has changed
+        # but for now we'll just update the text
+        if text != previous_text:
+            # i.e. the text has changed
+            #st.session_state['entered_text'] = text
+            tokens, trailing_whitespace = tokenize_text(text)
+            #print(f'len tokens: {len(st.session_state["tokens"])}, new len: {len(tokens)}, len labels {len(st.session_state["labels"])}')
+            update_content(text, tokens, trailing_whitespace)
 
     with tab2:
         st.write('About the app')
@@ -265,6 +196,7 @@ with col1:
                 num_rows="dynamic",
                 hide_index=True,
                 key='label_df' + st.session_state['example_key'],
+                disabled=["PII"],
                 )
                 # create a button
             if st.button('Restore original', key='restore'):
@@ -303,7 +235,23 @@ with col3:
     tab1, tab2, tab3, tab4 = st.tabs(options)
 
     #analyzed = st.tabs(['🔎Analyse PII'])[0]
-
+    # Load the model
+    #with st.spinner('Loading model...'):
+    model_name = "RFC" # ["RFC", "Mock"]
+    model = get_model(model_name=model_name)
+    # how to check if the entered text has changed from the previous text, and the model has not predicted it already
+    if text != previous_text:
+        # check if we need to classify, i.e. the tokens and labels are not the same
+        if len(st.session_state['tokens']) != len(st.session_state['labels']):
+            #with st.spinner('Classifying PII...'):
+            print(f'classifying at HH:MM:SS = {time.strftime("%H:%M:%S")}')
+            # classify the text
+            labels = model.predict_PII(text, tokens)
+            # update the labels
+            st.session_state['labels'] = labels
+            # update the annotations
+            update_annotations(text, tokens, trailing_whitespace, labels)
+            st.rerun()
     #with analyzed:
     with tab1:
         # Display the anonymized text
@@ -327,7 +275,6 @@ with col3:
         annotation('cleared_PII')
 
 
-
 #%%
 ####################
 # Footer
@@ -338,3 +285,6 @@ st.write('');st.write('');st.write('');st.write('');st.write('');
 st.write('**Model version:** 1.0.0')
 # Display the source code
 st.markdown('**Source code:** [GitHub](https://github.com/PhillipHoejbjerg/PII_data_detection)')
+
+
+
