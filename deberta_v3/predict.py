@@ -74,7 +74,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     args.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    args.AMP = (args.device == 'cuda')
+    args.AMP = (str(args.device) == 'cuda')
 
     # Instantiate tokenizer
     tokenizer = DebertaV2TokenizerFast.from_pretrained(args.model_path)

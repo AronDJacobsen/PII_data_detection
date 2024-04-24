@@ -146,7 +146,7 @@ if __name__ == "__main__":
                                    per_device_eval_batch_size=1, 
                                    report_to="none", 
                                    fp16=args.AMP, 
-                                   use_cpu=(args.device == 'cpu'))
+                                   use_cpu=(str(args.device) == 'cpu'))
     
     trainer = Trainer(
         model=model, 
@@ -166,12 +166,30 @@ if __name__ == "__main__":
     # Calculating f_beta score on validation set
     print("Predicting on validation....")
 
-    _, data['val'] = get_predictions(data['val'], trainer, model, args, nlp, return_all = True)
+    data_val = data['val'].select([709, 708, 2, 4])
+
+    _, data_val = get_predictions(data_val, trainer, model, args, nlp, return_all = True)
 
     print("Calculating f5 score....")
-    non_O_ids = [item != 'O' for sublist in data['val']['provided_labels'] for item in sublist]
+    non_O_ids = [item != 'O' for sublist in data_val['pred_labels'] for item in sublist]
 
-    true_labels = np.array([data['label2id'][item] for sublist in data['val']['provided_labels'] for item in sublist])[non_O_ids]
-    pred_labels = np.array([data['label2id'][item] for sublist in data['val']['pred_labels'] for item in sublist])[non_O_ids]
+    true_labels = np.array([data['label2id'][item] for sublist in data_val['provided_labels'] for item in sublist])
+    pred_labels = np.array([data['label2id'][item] for sublist in data_val['pred_labels'] for item in sublist])
     
-    print(f"F5 score: {fbeta_score(true_labels, pred_labels, average='micro', beta=5)}")
+    # On all classes
+    print(f"F5 score (ALL): {fbeta_score(true_labels, pred_labels, labels = [data['label2id'][label] for label in data['label2id'].keys() if label != 'O'], average='micro', beta=5)}")
+    print(f"F5 score (Excluding O): {fbeta_score(true_labels[non_O_ids], pred_labels[non_O_ids], average='micro', beta=5)}")
+
+    # Calculate precision, recall and f1
+    print("Calculating precision, recall and f1....")
+    f1 = fbeta_score(true_labels, pred_labels, average='micro', beta=1)
+    f1_non_O_ids = fbeta_score(true_labels[non_O_ids], pred_labels[non_O_ids], average='micro', beta=1)
+
+    recall = fbeta_score(true_labels, pred_labels, average='micro', beta=0)
+    recall_non_O_ids = fbeta_score(true_labels[non_O_ids], pred_labels[non_O_ids], average='micro', beta=0)
+
+    precision = fbeta_score(true_labels, pred_labels, average='micro', beta=np.inf)
+    precision_non_O_ids = fbeta_score(true_labels[non_O_ids], pred_labels[non_O_ids], average='micro', beta=np.inf)
+
+    print(f"Precision: {precision}, Recall: {recall}, F1: {f1}")
+    print(f"Precision (Excluding O): {precision_non_O_ids}, Recall (Excluding O): {recall_non_O_ids}, F1 (Excluding O): {f1_non_O_ids}")
