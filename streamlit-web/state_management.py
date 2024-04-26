@@ -113,7 +113,7 @@ def get_change(from_df, to_df):
     # NOTE: only one action is allowed at a time
     # i.e. updated to a new value, removed or added
     # and we'll just update the annotated texts
-    removed, added, edited = None, None, None
+    removed, added, edited, edited_from, edited_to = None, None, False, None, None
     if from_df.shape[0] > to_df.shape[0]:
         # find the removed token
         removed = from_df[~from_df['token'].isin(to_df['token'])]
