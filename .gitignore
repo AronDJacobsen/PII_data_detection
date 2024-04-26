@@ -3,3 +3,6 @@ data/*
 advba/
 results/
 .DS_Store
+
+
+models/*

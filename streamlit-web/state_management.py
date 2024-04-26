@@ -2,6 +2,8 @@
 import streamlit as st
 import pandas as pd
 
+from utilities import create_annotated_text
+
 
 def init_session_state():
     # Initialize session_state variables if they don't exist
@@ -23,10 +25,10 @@ def init_session_state():
 
     if 'analyze_PII' not in st.session_state:
         st.session_state['analyze_PII'] = [""]
-    if 'peseudo_PII' not in st.session_state:
-        st.session_state['peseudo_PII'] = [""]
-    if 'tak_PII' not in st.session_state:
-        st.session_state['tak_PII'] = [""]
+    if 'alias_PII' not in st.session_state:
+        st.session_state['alias_PII'] = [""]
+    if 'tagged_PII' not in st.session_state:
+        st.session_state['tagged_PII'] = [""]
     if 'cleared_PII' not in st.session_state:
         st.session_state['cleared_PII'] = [""]
     if 'label_df' not in st.session_state:
@@ -36,6 +38,10 @@ def init_session_state():
         st.session_state['example'] = False
     if "example_key" not in st.session_state:
         st.session_state['example_key'] = "xxgboosters2"
+
+    # display type
+    if 'display_type' not in st.session_state:
+        st.session_state['display_type'] = 'text'
 
 
 def clear_session_state():
@@ -47,13 +53,15 @@ def clear_session_state():
     st.session_state['original_content'] = ([], [])
     
     st.session_state['analyze_PII'] = [""]
-    st.session_state['peseudo_PII'] = [""]
-    st.session_state['tak_PII'] = [""]
+    st.session_state['alias_PII'] = [""]
+    st.session_state['tagged_PII'] = [""]
     st.session_state['cleared_PII'] = [""]
     st.session_state['label_df'] = pd.DataFrame()
 
     st.session_state['example'] = False
     st.session_state['example_key'] += '1' # increment the key to force a refresh
+
+    st.session_state['display_type'] = 'text'
 
 
 
@@ -62,10 +70,11 @@ def restore_original():
     # update with the session state tokens and labels
     #print('restoring text')
     #print(st.session_state['tokens'][5:15])
-    original_tokens, original_labels = st.session_state['original_content']
+    original_tokens, original_labels, label_df = st.session_state['original_content']
     update_content(st.session_state['entered_text'], original_tokens, st.session_state['trailing_whitespace'])
     st.session_state['labels'] = original_labels
-    update_annotations(st.session_state['entered_text'], original_tokens, st.session_state['trailing_whitespace'], original_labels)
+    st.session_state['label_df'] = label_df
+    update_annotations(st.session_state['entered_text'], original_tokens, st.session_state['trailing_whitespace'], original_labels, label_df)
     st.session_state['example_key'] += '1' # increment the key to force a refresh
     #st.rerun()
 
@@ -78,31 +87,29 @@ def update_content(text, tokens, trailing_whitespace):
     st.session_state['trailing_whitespace'] = trailing_whitespace
 
 
-def update_annotations(text, tokens, trailing_whitespace, labels):
+def update_annotations(text, tokens, trailing_whitespace, labels, label_df):
     # get the annotation
     # batch all consecutive tokens with the same label + add trailing white space
     #batched_tokens, batched_labels = batch_model_output(tokens, trailing_whitespace, labels, simplify=False)
     # annotate the text
     #print('updating annotations')
-    annotations = create_annotated_text(tokens, labels, trailing_whitespace)
-    st.session_state['analyze_PII'], st.session_state['peseudo_PII'], st.session_state['tag_PII'], st.session_state['cleared_PII'] = annotations
-    st.session_state['label_df'] = label_dataframe(tokens, labels)
+    annotations = create_annotated_text(tokens, labels, trailing_whitespace, label_df)
+    st.session_state['analyze_PII'], st.session_state['alias_PII'], st.session_state['tagged_PII'], st.session_state['cleared_PII'] = annotations
 
 
+def check_for_valid_change(from_df, to_df):
+    # no value has to be none
+    if to_df.isnull().values.any():
+        return False
+    # no empty strings
+    if to_df[['token', 'label']].isin(['']).values.any():
+        return False
+    # check if dataframes are equal
+    if from_df.equals(to_df):
+        return False
+    return True
 
-def label_dataframe(tokens, labels):
-    # create df
-    df = pd.DataFrame({ 'token': tokens, 'label': labels})
-    # remove O
-    df = df[df['label'] != 'O']
-    # make unique
-    df = df.drop_duplicates()
-    # reset index
-    df.reset_index(drop=True, inplace=True)
-    return df
-
-
-def update_variables(from_df, to_df):
+def get_change(from_df, to_df):
     # NOTE: only one action is allowed at a time
     # i.e. updated to a new value, removed or added
     # and we'll just update the annotated texts
@@ -124,6 +131,13 @@ def update_variables(from_df, to_df):
             edited_from = from_df[diff_indices]
             edited_to = to_df[diff_indices]
             edited = True
+
+    return removed, added, edited, edited_from, edited_to
+
+def update_variables(from_df, to_df):
+
+    # get change
+    removed, added, edited, edited_from, edited_to = get_change(from_df, to_df)
     # get the tokens and labels
     tokens, labels = st.session_state['tokens'].copy(), st.session_state['labels'].copy()
     for i, (token, label) in enumerate(zip(tokens, labels)):
@@ -149,73 +163,8 @@ def update_variables(from_df, to_df):
     # update the content
     update_content(st.session_state['entered_text'], tokens, st.session_state['trailing_whitespace'])
     st.session_state['labels'] = labels
+    st.session_state['label_df'] = to_df
     # update the annotations
-    update_annotations(st.session_state['entered_text'], tokens, st.session_state['trailing_whitespace'], labels)
+    update_annotations(st.session_state['entered_text'], tokens, st.session_state['trailing_whitespace'], labels, to_df)
     st.rerun()
-
-
-
-def create_annotated_text(tokens, labels, trailing_whitespace):
-    """
-    Annotate the text with the labels
-    - works by tuple (token, label)
-    """
-    # create the annotation
-    analyze_annotations = []
-    pseudo_annotations = []
-    tag_annotations = []
-    cleared_annotations = []
-    previous_label = None
-    for token, label, space in zip(tokens, labels, trailing_whitespace):
-        # not annotated text
-        if label == 'O':
-            if previous_label == 'O':
-                analyze_annotations[-1] += token
-                pseudo_annotations[-1] += token
-                tag_annotations[-1] += token
-                cleared_annotations[-1] += token
-            else:
-                analyze_annotations.append(token)
-                pseudo_annotations.append(token)
-                tag_annotations.append(token)
-                cleared_annotations.append(token)
-            # simply show the text (no tuple)
-            # analyze_annotations[-1] += token if previous_label == 'O' else analyze_annotations.append(token)
-            # pseudo_annotations[-1] += token if previous_label == 'O' else pseudo_annotations.append(token)
-            # tag_annotations[-1] += token if previous_label == 'O' else tag_annotations.append(token)
-            # cleared_annotations[-1] += token if previous_label == 'O' else cleared_annotations.append(token)
-            #pseudo_annotations.append(token) if previous_label != 'O' else pseudo_annotations[-1] += token
-            #tag_annotations.append(token)
-            #cleared_annotations.append(token)
-        # annotated text
-        else:
-            analyze_annotations.append((token, label))
-            pseudo_annotations.append((token, label)) # TODO
-            tag_annotations.append((label, ""))
-            cleared_annotations.append(("removed", ""))
-        
-        # finally add the trailing white space
-        if space:
-            if label == 'O':
-                analyze_annotations[-1] += " "
-                pseudo_annotations[-1] += " "
-                tag_annotations[-1] += " "
-                cleared_annotations[-1] += " "
-            else:
-                analyze_annotations.append(" ")
-                pseudo_annotations.append(" ")
-                tag_annotations.append(" ")
-                cleared_annotations.append(" ")
-            # add the trailing white space
-            # analyze_annotations[-1] += " " if previous_label == 'O' else analyze_annotations.append(" ")
-            # pseudo_annotations[-1] += " " if previous_label == 'O' else pseudo_annotations.append(" ")
-            # tag_annotations[-1] += " " if previous_label == 'O' else tag_annotations.append(" ")
-            # cleared_annotations[-1] += " " if previous_label == 'O' else cleared_annotations.append(" ")
-
-            #pseudo_annotations.append(" ")
-            #tag_annotations.append(" ")
-            #cleared_annotations.append(" ")
-        # update previous
-        previous_label = label
-    return analyze_annotations, pseudo_annotations, tag_annotations, cleared_annotations
 

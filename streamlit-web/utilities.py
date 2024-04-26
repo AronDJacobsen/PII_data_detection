@@ -1,6 +1,9 @@
 import json
 import streamlit as st
+import pandas as pd
+from faker import Faker 
 
+fake = Faker()
 
 # # Load the English tokenizer, tagger, parser, NER, and word vectors
 #nlp = spacy.load("en_core_web_sm")
@@ -49,6 +52,126 @@ def get_example(document_id=0):
     text = f"Example {document_id}:\n{text}"
 
     return text, tokens, trailing_whitespace, labels
+
+
+
+def get_alias(token, label):
+    alias = ""
+    #fake_profile = fake.simple_profile()
+    if label[0] == 'B':
+            
+        if label == 'B-NAME_STUDENT':
+            #alias = fake_profile['name']
+            alias = fake.name()
+
+
+        elif label == 'B-EMAIL':
+            #alias = fake_profile['mail']
+            alias = fake.email()
+
+        elif label == 'B-PHONE_NUM':
+            alias = fake.phone_number()
+
+
+        elif label == 'B-STREET_ADDRESS':
+            #alias = fake_profile['address']
+            alias = fake.address()
+
+
+        elif label == 'B-USERNAME':
+            #alias = fake_profile['username']
+            alias = fake.user_name()
+
+        elif label == 'B-ID_NUM':
+            # create a random 8 digit number
+            alias = str(fake.random_number(digits=8))
+
+        elif label == 'B-URL_PERSONAL':
+            alias = fake.url()
+    else:
+        # I will just be empty
+        alias = ""
+
+    return alias
+
+
+def create_alias_df(label_df):
+    new_label_df = label_df.copy()
+    new_label_df['alias'] = ''
+    for i, row in new_label_df.iterrows():
+        new_label_df.at[i, 'alias'] = get_alias(row['token'], row['label'])
+
+    return new_label_df
+
+
+def label_dataframe(tokens, labels):
+    # create df
+    df = pd.DataFrame({ 'token': tokens, 'label': labels})
+    # remove O
+    df = df[df['label'] != 'O']
+    # make unique
+    df = df.drop_duplicates()
+    # reset index
+    df.reset_index(drop=True, inplace=True)
+
+    df = create_alias_df(df)
+    return df
+
+
+
+
+def create_annotated_text(tokens, labels, trailing_whitespace, label_df):
+    """
+    Annotate the text with the labels
+    - works by tuple (token, label)
+    """
+
+    # create the annotation
+    analyze_annotations = []
+    alias_annotations = []
+    tagged_annotations = []
+    cleared_annotations = []
+    previous_label = None
+    for token, label, space in zip(tokens, labels, trailing_whitespace):
+        # not annotated text
+        if label == 'O':
+            if previous_label == 'O':
+                analyze_annotations[-1] += token
+                alias_annotations[-1] += token
+                tagged_annotations[-1] += token
+                cleared_annotations[-1] += token
+            else:
+                analyze_annotations.append(token)
+                alias_annotations.append(token)
+                tagged_annotations.append(token)
+                cleared_annotations.append(token)
+
+        # annotated text
+        else:
+            analyze_annotations.append((token, label))
+            # find the alias
+            alias = label_df[label_df['token'] == token]['alias'].values[0]
+            if label[0] == "B":
+                simplified_label = further_simplify_labels_dict[simplify_labels_dict[label]]
+                alias_annotations.append((alias, simplified_label))
+            tagged_annotations.append((label, ""))
+            cleared_annotations.append(("removed", ""))
+        
+        # finally add the trailing white space
+        if space:
+            if label == 'O':
+                analyze_annotations[-1] += " "
+                alias_annotations[-1] += " "
+                tagged_annotations[-1] += " "
+                cleared_annotations[-1] += " "
+            else:
+                analyze_annotations.append(" ")
+                alias_annotations.append(" ")
+                tagged_annotations.append(" ")
+                cleared_annotations.append(" ")
+        # update previous
+        previous_label = label
+    return analyze_annotations, alias_annotations, tagged_annotations, cleared_annotations
 
 
 
